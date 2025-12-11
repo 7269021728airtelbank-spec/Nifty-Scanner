@@ -1,5 +1,6 @@
 # ====================================================================
 # QCS V9.2 LIVE SCANNER (OI Primary Signal, QCS Informational)
+# FINAL VERSION with G1/R2/G9/R10 Strategies
 # NIFTY Scanner | GitHub Actions & JSONBin Compatible
 # QCS SCORE IS NOW INFORMATIONAL - DOES NOT BLOCK TRADES!
 # ====================================================================
@@ -14,7 +15,6 @@ from datetime import datetime, timedelta
 import numpy as np 
 import re
 from bs4 import BeautifulSoup
-# NOTE: Removed sys, kept math, os, time, re, numpy, datetime
 
 # --- GitHub Secrets (Used instead of local variables) ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") 
@@ -169,7 +169,7 @@ def save_state():
     except Exception as e:
         print(f"General Save Error: {e}")
 
-# ----------------- 3. UTILITY FUNCTIONS (ADAPTED) -----------------
+# ----------------- 3. UTILITY FUNCTIONS -----------------
 
 def send_telegram(message):
     """Sends HTML formatted message to Telegram (Renamed from send_telegram_alert)"""
@@ -185,10 +185,9 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-# --- (Other utility functions like get_live_vix, get_fii_dii_flow, get_nse_data etc. remain the same as you provided) ---
-
 def get_live_vix():
     """Fetches LIVE India VIX from NSE"""
+    # NOTE: Simplified VIX fetching for serverless environment
     try:
         vix_url = "https://www.nseindia.com/api/quote-derivative?symbol=INDIA%20VIX&identifier=NC_NIFTY_INDIA_VIX"
         r = session.get(vix_url, headers=HEADERS, timeout=10)
@@ -216,7 +215,6 @@ def get_live_vix():
 
 def get_fii_dii_flow():
     """Fetches previous day FII/DII net flow (Absolute Total) - Placeholder for Serverless"""
-    # NOTE: FII/DII data is unreliable in serverless; keeping fallback for QCS completeness.
     return 1500.0  # Ultimate fallback value (in Cr.)
 
 def get_nse_data(index_name):
@@ -316,9 +314,7 @@ def apply_v8_filters(vix, spot_volatility_pts, qcs_score):
         return False, "MISMATCH_BLOCK", 0 
         
     # 2. QCS NO_TRADE Check (Removed/Modified)
-    # The original logic below is REMOVED to keep QCS informational:
-    # if qcs_score < QCS_NO_TRADE_THRESHOLD:
-    #     return False, "LOW_QCS", 0
+    # This logic is intentionally removed to keep QCS informational.
         
     # 3. Lot Sizing (QCS is still used here)
     if qcs_score >= QCS_GIANT_TRADE_MIN:
@@ -331,7 +327,7 @@ def apply_v8_filters(vix, spot_volatility_pts, qcs_score):
 def calculate_adaptive_thresholds(raw_records, spot_price, current_time_str):
     """Calculates TIOI and ATM Avg dOI from opening data for the day's thresholds."""
     global historical_metrics, todays_calibration, calibration_snapshots
-    # ... (Same logic as you provided) ...
+    
     current_total_oi = 0
     current_snapshot = []
     LOT_SIZE = 50 
@@ -490,7 +486,10 @@ def fetch_live_data():
     }
 
 def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD, TRAP_COUNT, HEAVY_OI_THRESHOLD):
-    """Performs V6.5 OI analysis using dynamically adjusted thresholds."""
+    """
+    Performs V9.2 OI analysis using dynamically adjusted thresholds, 
+    incorporating V6.5 strategies (G1, R2, G9/R10).
+    """
     
     strikes = sorted(market_data.keys())
     relevant_strikes = []
@@ -501,20 +500,24 @@ def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD,
     for strike in strikes:
         distance = abs(strike - spot_price)
         
+        # Check nearby strikes for signal
         if distance <= MAX_OI_DISTANCE: relevant_strikes.append(strike)
+        # Check strikes closest to ATM for ATM flow logic (within +/- 100 points)
         if abs(strike - atm_strike) <= 100: atm_band_strikes.append(strike)
+        # Check nearby strikes for trap logic (within +/- 500 points)
         if distance <= MAX_OI_DISTANCE: trap_range_strikes.append(strike)
 
     doi_map = {} 
     
     for strike in relevant_strikes:
         data = market_data.get(strike, {})
+        # Change in OI is calculated here (current OI - previous OI) * LOT_SIZE
         ce_doi = (data.get("ce_oi", 0) - data.get("ce_prev_oi", 0)) * LOT_SIZE
         pe_doi = (data.get("pe_oi", 0) - data.get("pe_prev_oi", 0)) * LOT_SIZE
 
         doi_map[strike] = {"ce_doi": ce_doi, "pe_doi": pe_doi}
 
-    # 2. Strategy 17 – Trap (Double Blast) Check
+    # 1. Strategy 17 – Trap (Double Blast) Check
     total_ce_heavy = 0
     total_pe_heavy = 0
 
@@ -522,6 +525,7 @@ def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD,
         d = doi_map.get(strike)
         if not d: continue
         
+        # NOTE: Using the HEAVY_OI_THRESHOLD (150k) for trap count
         if d["ce_doi"] >= HEAVY_OI_THRESHOLD: total_ce_heavy += 1
         if d["pe_doi"] >= HEAVY_OI_THRESHOLD: total_pe_heavy += 1
 
@@ -530,47 +534,59 @@ def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD,
         print(f"[TRAP ALERT] Double Blast: CE={total_ce_heavy}, PE={total_pe_heavy}, TRAP_COUNT={TRAP_COUNT}")
         return {"direction": "TRAP", "trap": True, "oi_met": 0}
 
-    # 3. OI-based Directional Logic (R2, R10) - PRIMARY SIGNAL GENERATION
+    # 2. V6.5 Core Directional Logic (G1, R2) - PRIMARY SIGNAL GENERATION
     final_direction = None         
     final_signal_type = None       
     final_suggested_option = None  
     final_suggested_strike = None
     oi_met_flag = 0 
-
-    # 3.1 Strategy 1/R2 – Core heavy OI 
+    
     best_heavy_score = 0
     best_heavy_record = None
     
+    # Check for G1 (Heavy Put Writing) and R2 (Heavy Call Writing)
     for strike in relevant_strikes:
         d = doi_map.get(strike)
         if not d: continue
 
         ce_doi = d["ce_doi"]
         pe_doi = d["pe_doi"]
+        
+        # G1: Heavy Put Writing (Bullish) - Prioritized
+        if pe_doi >= HEAVY_OI_THRESHOLD: 
+            direction = "BULLISH"
+            signal_type = "G1"
+            
+        # R2: Heavy Call Writing (Bearish)
+        elif ce_doi >= HEAVY_OI_THRESHOLD:
+            direction = "BEARISH"
+            signal_type = "R2"
+            
+        else: continue # Skip if not G1 or R2
 
-        if ce_doi >= HEAVY_OI_THRESHOLD or pe_doi >= HEAVY_OI_THRESHOLD:
-            direction = "BULLISH" if pe_doi > ce_doi else "BEARISH"
-            suggested_option = "CE" if direction == "BULLISH" else "PE"
+        suggested_option = "CE" if direction == "BULLISH" else "PE"
 
-            distance_score = max(1, MAX_OI_DISTANCE - abs(strike - spot_price))
-            magnitude_score = max(ce_doi, pe_doi)
-            score = magnitude_score * distance_score
+        # Score calculation to find the strongest/closest signal
+        distance_score = max(1, MAX_OI_DISTANCE - abs(strike - spot_price)) # Closer strikes get higher distance score
+        magnitude_score = max(ce_doi, pe_doi)
+        score = magnitude_score * distance_score
 
-            if score > best_heavy_score:
-                best_heavy_score = score
-                best_heavy_record = {
-                    "strike": strike, "direction": direction, "suggested_option": suggested_option,
-                    "strength": "HEAVY-OI", "signal_type": "R2", "ce_doi": ce_doi, "pe_doi": pe_doi
-                }
+        if score > best_heavy_score:
+            best_heavy_score = score
+            best_heavy_record = {
+                "strike": strike, "direction": direction, "suggested_option": suggested_option,
+                "strength": "HEAVY-OI", "signal_type": signal_type, "ce_doi": ce_doi, "pe_doi": pe_doi
+            }
 
     if best_heavy_record is not None:
         final_direction = best_heavy_record["direction"]
-        final_signal_type = best_heavy_record["signal_type"]
+        # Use the signal type identified (G1 or R2)
+        final_signal_type = best_heavy_record["signal_type"] 
         final_suggested_option = best_heavy_record["suggested_option"]
         final_suggested_strike = best_heavy_record["strike"]
         oi_met_flag = 1 
 
-    # 3.2 Strategy 9/R10 – ATM flow (only if core heavy not triggered)
+    # 3. ATM Flow Strategies (G9, R10) - Secondary Signal (only if G1/R2 not triggered)
     if final_direction is None:
         atm_ce_doi_total = 0
         atm_pe_doi_total = 0
@@ -581,12 +597,15 @@ def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD,
             atm_ce_doi_total += d["ce_doi"]
             atm_pe_doi_total += d["pe_doi"]
         
+        # G9: ATM Put Writing (BULLISH)
         if atm_pe_doi_total > ATM_OI_THRESHOLD and atm_pe_doi_total > atm_ce_doi_total:
             final_direction = "BULLISH"
-            final_signal_type = "R10"
+            final_signal_type = "G9"
             final_suggested_option = "CE"
             final_suggested_strike = atm_strike
             oi_met_flag = 1 
+            
+        # R10: ATM Call Writing (BEARISH)
         elif atm_ce_doi_total > ATM_OI_THRESHOLD and atm_ce_doi_total > atm_pe_doi_total:
             final_direction = "BEARISH"
             final_signal_type = "R10"
@@ -596,7 +615,7 @@ def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD,
 
     return {
         "direction": final_direction,
-        "signal_type": final_signal_type,
+        "signal_type": final_signal_type, # G1, R2, G9, or R10
         "suggested_option": final_suggested_option,
         "strike": final_suggested_strike,
         "trap": False,
@@ -605,7 +624,6 @@ def calculate_oi_analysis(market_data, atm_strike, spot_price, ATM_OI_THRESHOLD,
 
 def pre_market_safety_check():
     """V9.2 LIVE FII/DII + VIX Check (Macro Safety Block)"""
-    # NOTE: Using Fallback value for FII/DII
     fii_dii_net = get_fii_dii_flow()
     pre_market_vix = get_live_vix()
     
@@ -654,7 +672,7 @@ def analyze_market(index):
     # 2. DYNAMIC CALIBRATION
     ATM_OI_THRESHOLD, TRAP_COUNT = calculate_adaptive_thresholds(data.get('raw_records', []), data['underlying_value'], current_time_str)
     
-    # 3. V9.2 OI ANALYSIS (PRIMARY SIGNAL)
+    # 3. V9.2 OI ANALYSIS (PRIMARY SIGNAL: G1/R2/G9/R10)
     oi_signal = calculate_oi_analysis(
         data['market_data'], data['atm_strike'], data['underlying_value'],
         ATM_OI_THRESHOLD, TRAP_COUNT, HEAVY_OI_THRESHOLD
@@ -702,7 +720,7 @@ def analyze_market(index):
         
         ptsl_dist = get_ptsl_distance(qcs_score)
         
-        # NOTE: Telegram message shows QCS but signal is based on OI analysis (R2/R10)
+        # NOTE: Telegram message shows QCS but signal is based on OI analysis (G1/R2/G9/R10)
         msg = f"""
 <b>🟢🔴 QUANTUM ALERT (OI Primary, QCS Informative)</b>
 <b>Signal:</b> <b>{final_direction}</b> ({oi_signal['signal_type']})
@@ -726,8 +744,7 @@ def analyze_market(index):
         
     elif CURRENT_TRADE_STATUS["in_trade"]:
         # Exit logic goes here (TSL/Exit)
-        # NOTE: For simplicity, TSL logic is currently placeholder, 
-        # but the structure is ready for P&L tracking and exit alerts.
+        # NOTE: Placeholder for TSL logic
         pass
         
     elif final_direction not in ("BULLISH", "BEARISH"):
@@ -747,6 +764,8 @@ def main_serverless():
     # Load state for date check
     full_state = load_state()
     FULL_TRADE_BLOCKED = full_state.get('full_trade_blocked', False)
+    # Load calibration state for date check
+    todays_calibration.update(full_state.get('todays_calibration', todays_calibration.copy()))
     last_run_date = full_state.get('last_run_date')
     
     now_date = datetime.now().strftime("%Y-%m-%d")
@@ -762,13 +781,13 @@ def main_serverless():
         reset_trade_status = CURRENT_TRADE_STATUS.copy()
         reset_trade_status["in_trade"] = False 
         
+        # Save the initial reset state
         full_state.update({
             'full_trade_blocked': False,
             'current_trade_status': reset_trade_status,
             'todays_calibration': todays_calibration,
             'oi_state': {} # Clear OI state for the new day
         })
-        # Save the initial reset state
         save_state() 
         send_telegram("🚀 <b>V9.2 OI Primary Bot Started!</b>\n✅ New day reset complete. Awaiting Calibration and Signals.")
 
