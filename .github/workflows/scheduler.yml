@@ -1,12 +1,9 @@
-name: QCS V9.2 Market Scanner
+Name: QCS V9.2 Market Scanner
 
 on:
-  # Cron job IST में Monday to Friday, 9:30 AM से 3:30 PM तक हर 3 मिनट में चलेगा।
+  # Cron job IST में Monday to Friday, 9:30 AM से 3:30 PM तक हर 3 मिनट में चलेगा (UTC 4:00 से 11:00 बजे तक)।
   schedule:
     - cron: '*/3 4-11 * * 1-5' 
-  
-  # Manual trigger के लिए
-  workflow_dispatch:
 
 jobs:
   run-bot:
