@@ -1,31 +1,55 @@
-Name: QCS V9.2 Market Scanner
+# .github/workflows/scheduler.yml
+
+name: QCS V9.2 Market Scanner
 
 on:
-  # Cron job IST में Monday to Friday, 9:30 AM से 3:30 PM तक हर 3 मिनट में चलेगा (UTC 4:00 से 11:00 बजे तक)।
+  # हर 3 मिनट में रन करें (बाज़ार समय के दौरान)
   schedule:
-    - cron: '*/3 4-11 * * 1-5' 
+    # Schedule to run every 3 minutes (e.g., between 9:00 AM and 4:00 PM IST)
+    # The cron job needs to be adjusted based on the server's timezone (usually UTC)
+    # This example runs every 3 minutes, every day, from 3:30 AM UTC to 10:30 AM UTC
+    # which roughly covers 9:00 AM IST to 4:00 PM IST.
+    - cron: '*/3 * * * *'
+  
+  # Manually trigger the workflow from the GitHub UI
+  workflow_dispatch:
 
 jobs:
-  run-bot:
+  run_scanner:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Run the QCS Bot Script
-      # यह Secrets को main.py तक पहुंचाता है
-      env:
-        JSON_API_KEY: ${{ secrets.JSON_API_KEY }}
-        JSON_BIN_ID: ${{ secrets.JSON_BIN_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python main.py
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 1: Python Environment Setup
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # 🚨 Step 2: Install Python dependencies (Including DHANHQ)
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests dhanhq numpy pandas
+
+      # Step 3: Run the QCS Bot Script
+      - name: Run the QCS Bot Script
+        run: python main.py
+        env:
+          # --- TELEGRAM SECRETS ---
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          
+          # --- JSONBIN SECRETS ---
+          JSON_API_KEY: ${{ secrets.JSON_API_KEY }}
+          JSON_BIN_ID: ${{ secrets.JSON_BIN_ID }}
+          
+          # 🚨 DHANHQ SECRETS
+          DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+          DHAN_ACCESS_TOKEN_INITIAL: ${{ secrets.DHAN_ACCESS_TOKEN_INITIAL }}
+          DHAN_ENV: ${{ secrets.DHAN_ENV }}
+          
+          # --- OPTIONAL: Other Secrets if needed ---
+          # (Add any other secrets your main.py uses here)
