@@ -3,16 +3,17 @@
 name: QCS V9.2 Market Scanner
 
 on:
-  # हर 3 मिनट में रन करें (बाज़ार समय के दौरान)
   schedule:
-    # Schedule to run every 3 minutes (e.g., between 9:00 AM and 4:00 PM IST)
-    # The cron job needs to be adjusted based on the server's timezone (usually UTC)
-    # This example runs every 3 minutes, every day, from 3:30 AM UTC to 10:30 AM UTC
-    # which roughly covers 9:00 AM IST to 4:00 PM IST.
+    # यह हर 3 मिनट में रन करने का प्रयास करेगा
     - cron: '*/3 * * * *'
   
-  # Manually trigger the workflow from the GitHub UI
+  # GitHub UI से मैन्युअल रूप से चलाने के लिए
   workflow_dispatch:
+
+# 🚨 IMPORTANT: यह पक्का करेगा कि एक समय पर केवल एक ही लूप चले
+concurrency:
+  group: qcs-scanner-group
+  cancel-in-progress: true
 
 jobs:
   run_scanner:
@@ -28,7 +29,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 🚨 Step 2: Install Python dependencies (Including DHANHQ)
+      # Step 2: Install Python dependencies
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -46,10 +47,7 @@ jobs:
           JSON_API_KEY: ${{ secrets.JSON_API_KEY }}
           JSON_BIN_ID: ${{ secrets.JSON_BIN_ID }}
           
-          # 🚨 DHANHQ SECRETS
+          # --- DHANHQ SECRETS ---
           DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
           DHAN_ACCESS_TOKEN_INITIAL: ${{ secrets.DHAN_ACCESS_TOKEN_INITIAL }}
           DHAN_ENV: ${{ secrets.DHAN_ENV }}
-          
-          # --- OPTIONAL: Other Secrets if needed ---
-          # (Add any other secrets your main.py uses here)
